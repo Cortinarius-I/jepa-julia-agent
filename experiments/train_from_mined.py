@@ -491,7 +491,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Train JEPA from mined transitions")
     parser.add_argument("transitions_path", type=Path, nargs="+",
-                       help="Path(s) to transitions JSONL files")
+                       help="Path(s) to transitions (JSONL or Parquet files)")
     parser.add_argument("--save-dir", type=Path, default=Path("checkpoints/mined"),
                        help="Directory to save checkpoints")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
@@ -499,7 +499,26 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--val-split", type=float, default=0.1, help="Validation split")
     parser.add_argument("--vocab-path", type=Path, help="Path to pre-built vocabulary")
+    parser.add_argument("--max-transitions", type=int, default=None,
+                       help="Maximum transitions to use (for resource-limited training)")
     args = parser.parse_args()
+
+    # Expand glob patterns (useful for shell expansion)
+    all_paths = []
+    for p in args.transitions_path:
+        if "*" in str(p):
+            all_paths.extend(Path(".").glob(str(p)))
+        else:
+            all_paths.append(p)
+    args.transitions_path = all_paths
+
+    if not args.transitions_path:
+        logger.error("No transition files found!")
+        return
+
+    logger.info(f"Found {len(args.transitions_path)} transition file(s)")
+    for p in args.transitions_path:
+        logger.info(f"  - {p} ({p.suffix})")
 
     # Build or load vocabulary from first file
     if args.vocab_path and args.vocab_path.exists():
@@ -523,6 +542,12 @@ def main():
         dataset = TransitionDataset(path, vocab)
         all_transitions.extend(dataset.transitions)
         logger.info(f"Loaded {len(dataset)} transitions from {path}")
+
+        # Early exit if we have enough transitions
+        if args.max_transitions and len(all_transitions) >= args.max_transitions:
+            all_transitions = all_transitions[:args.max_transitions]
+            logger.info(f"Reached max transitions limit: {args.max_transitions}")
+            break
 
     # Create combined dataset
     combined_dataset = TransitionDataset.__new__(TransitionDataset)

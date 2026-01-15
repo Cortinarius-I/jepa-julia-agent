@@ -85,15 +85,18 @@ jepa-julia-agent/
 │
 ├── data/
 │   ├── repos/                # Cloned Julia repositories
-│   ├── transitions/          # Mined transition JSONL files
+│   ├── transitions/          # Mined transitions (Parquet default)
 │   └── embeddings/
 │
 ├── scripts/
-│   ├── mine_transitions.py   # Git history mining (17 action types)
-│   └── validate_julia.jl     # Julia syntax validation
+│   ├── mine_transitions.py   # Git history mining (17 action types, Parquet output)
+│   ├── convert_to_parquet.py # JSONL ↔ Parquet conversion
+│   ├── validate_julia.jl     # Julia syntax validation
+│   └── train_codespaces.sh   # NEW: Training script for GitHub Codespaces
 │
 ├── tests/
-│   └── test_julia_bridge.py  # NEW: Julia bridge tests (10 tests)
+│   ├── test_julia_bridge.py  # Julia bridge tests (10 tests)
+│   └── test_parquet.py       # NEW: Parquet support tests (7 tests)
 │
 ├── transformer/
 │   └── render.py              # Constrained code completion
@@ -153,21 +156,43 @@ end
 ## 6. Quick Start
 
 ```bash
-# Mine transitions from a Julia repository
+# Mine transitions from a Julia repository (outputs Parquet by default)
 python scripts/mine_transitions.py path/to/Julia/Package.jl
+# → data/transitions/Package.jl.parquet
 
-# Train on mined transitions
-python experiments/train_from_mined.py data/transitions/*.jsonl --epochs 50
+# Train on mined transitions (supports both Parquet and JSONL)
+python experiments/train_from_mined.py data/transitions/*.parquet --epochs 50
 
 # Results from initial training (674 transitions, 2 repos):
 # - Cosine similarity: 0.91 (target >0.85) ✅
 # - Best val loss: 0.054
 # - Action inference: 100% classified (17 action types)
 
-# Run Julia bridge tests
-python tests/test_julia_bridge.py              # Mock mode (fast)
-python tests/test_julia_bridge.py --with-julia # Real Julia (requires juliacall)
+# Run tests
+python tests/test_julia_bridge.py              # Julia bridge (mock mode)
+python tests/test_julia_bridge.py --with-julia # Julia bridge (real Julia)
+python tests/test_parquet.py                   # Parquet support (7 tests)
 ```
+
+### Training in GitHub Codespaces
+
+For large-scale training without local GPU, use the Codespaces script:
+
+```bash
+# Quick mode: 4 repos, 25 epochs (~2 hours)
+./scripts/train_codespaces.sh --quick
+
+# Default: 8 repos, 50 epochs (~4-6 hours)
+./scripts/train_codespaces.sh
+
+# Full mode: 12 repos, 100 epochs (~8 hours)
+./scripts/train_codespaces.sh --full
+
+# Download trained model
+gh codespace cp remote:checkpoints/best.pt .
+```
+
+The script mines 8-12 Julia packages directly to Parquet (6x compression), then trains the JEPA model. Fits within Codespaces limits (60 core-hours, 15GB storage).
 
 ---
 

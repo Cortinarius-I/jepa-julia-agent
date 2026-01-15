@@ -1,14 +1,14 @@
 # Project Status
 
-**Current Version**: 0.3.1
+**Current Version**: 0.3.2
 **Last Updated**: 2026-01-15
-**Phase**: Training Data Collection Complete, Julia Bridge Tested
+**Phase**: Parquet Default, Codespaces Training Ready
 
 ---
 
 ## Summary
 
-Training data pipeline complete with 100% action classification (0% UNKNOWN). Mined 674 transitions from DataStructures.jl and JSON3.jl, achieving 0.91 cosine similarity. Julia bridge tested with 10/10 tests passing.
+Parquet is now the default output format for mining (6x compression). Added Codespaces training script for scalable training on 8-12 Julia packages. All tests passing: 10 Julia bridge + 7 Parquet tests.
 
 ---
 
@@ -36,10 +36,13 @@ Training data pipeline complete with 100% action classification (0% UNKNOWN). Mi
 | knowledge_synthesis.py | ✅ **NEW** | Doc retrieval, context enrichment |
 | trace_prediction.py | ✅ **NEW** | Embedding-space trace prediction |
 | **Data Pipeline** | | |
-| mine_transitions.py | ✅ **NEW** | Git history mining with Julia validation |
-| validate_julia.jl | ✅ **NEW** | Julia syntax validation script |
-| test_julia_bridge.py | ✅ **NEW** | Julia bridge unit tests (10 tests) |
-| transition_dataset.py | ✅ **NEW** | PyTorch Dataset/DataLoader |
+| mine_transitions.py | ✅ Complete | Git history mining, Parquet default |
+| convert_to_parquet.py | ✅ **NEW** | JSONL ↔ Parquet conversion |
+| validate_julia.jl | ✅ Complete | Julia syntax validation script |
+| train_codespaces.sh | ✅ **NEW** | Scalable training for Codespaces |
+| test_julia_bridge.py | ✅ Complete | Julia bridge unit tests (10 tests) |
+| test_parquet.py | ✅ **NEW** | Parquet support tests (7 tests) |
+| transition_dataset.py | ✅ Complete | PyTorch Dataset, Parquet + JSONL support |
 | **Training** | | |
 | train_jepa.py | ✅ Complete | Basic training loop |
 | train_integrated.py | ✅ Complete | Integrated pipeline (all 5 recs) |
@@ -89,8 +92,9 @@ experiments/
 
 1. ~~**Training data**: Need (state, action, next_state) tuples from real Julia repos~~ ✅ RESOLVED
 2. ~~**Julia bridge testing**: Need to verify Python↔Julia communication~~ ✅ RESOLVED
-3. **Transformer model**: Need Julia-specific code completion model
-4. **Scale up mining**: Need 100k+ transitions from 500+ repos (current: 674 from 2)
+3. ~~**Scalable storage**: Need efficient format for large datasets~~ ✅ RESOLVED (Parquet, 6x compression)
+4. **Transformer model**: Need Julia-specific code completion model
+5. **Scale up mining**: Need 100k+ transitions from 500+ repos (current: 674 from 2)
 
 ---
 
@@ -101,9 +105,11 @@ experiments/
 3. [x] Train simplified JEPA on mined data (0.91 cosine similarity)
 4. [x] Improve action inference (0% UNKNOWN, was 14.8%)
 5. [x] Test Python-Julia bridge end-to-end (10/10 tests passing)
-6. [ ] Scale up mining to more Julia packages
-7. [ ] Integrate full world state extraction with training
-8. [ ] Evaluate multi-view embedding structure (SVD analysis)
+6. [x] Add Parquet support for scalable storage (6x compression)
+7. [x] Create Codespaces training script for cloud training
+8. [ ] Run Codespaces training on 8-12 Julia packages
+9. [ ] Integrate full world state extraction with training
+10. [ ] Evaluate multi-view embedding structure (SVD analysis)
 
 ---
 

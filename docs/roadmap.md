@@ -94,11 +94,19 @@ Based on analysis of LLM-JEPA, CWM, and Agent2World papers.
 - [x] JSONL schema: (state, action, next_state, validation)
 - [x] PyTorch Dataset + PyG Collator (`agent/data/transition_dataset.py`)
 - [x] Vocabulary building for Julia symbols
-- [ ] Build efficient storage (Parquet, memory-mapped)
+- [x] Parquet storage (6x compression, default format)
+- [x] Codespaces training script for scalable cloud training
 - [ ] Include multi-view data (NL goals, traces)
 
 ### Progress: 674 transitions from 2 repositories, 0% UNKNOWN action inference, 0.91 cosine sim achieved
 ### Target: 100k+ verified transitions from 500+ repositories
+
+### Codespaces Training
+The `scripts/train_codespaces.sh` script enables scalable training:
+- Mines 8-12 Julia packages directly to Parquet
+- Fits within Codespaces limits (60 core-hours, 15GB storage)
+- Three modes: `--quick` (2h), default (4-6h), `--full` (8h)
+- Target repos: JSON.jl, CSV.jl, ForwardDiff.jl, Optim.jl, Distributions.jl, Graphs.jl, HTTP.jl, Zygote.jl, Pluto.jl, DataFrames.jl, Flux.jl, JuMP.jl
 
 ---
 

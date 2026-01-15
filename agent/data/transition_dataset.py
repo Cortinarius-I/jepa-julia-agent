@@ -1,8 +1,12 @@
 """
 Training Data Loader for JEPA Model.
 
-Loads mined transitions from JSONL files and converts them to the
+Loads mined transitions from JSONL or Parquet files and converts them to the
 tensor format expected by the JEPA model.
+
+Supported formats:
+- JSONL: Simple, human-readable, good for small datasets (<10k transitions)
+- Parquet: Compressed columnar, ~3-5x smaller, faster for large datasets
 
 Key components:
 1. TransitionDataset: PyTorch Dataset for transitions
@@ -47,20 +51,41 @@ class Vocabulary:
         min_freq: int = 2,
         max_vocab_size: int = 10000,
     ) -> "Vocabulary":
-        """Build vocabulary from transition files."""
+        """Build vocabulary from transition files (JSONL or Parquet)."""
+        transitions_path = Path(transitions_path)
         counter: Counter[str] = Counter()
 
-        with open(transitions_path) as f:
-            for line in f:
-                t = json.loads(line)
-                # Extract tokens from action
-                if t["action"].get("target_symbol"):
-                    counter[t["action"]["target_symbol"]] += 1
+        if transitions_path.suffix == ".parquet":
+            # Load from Parquet
+            try:
+                import pyarrow.parquet as pq
+            except ImportError:
+                raise ImportError("PyArrow required for Parquet. pip install pyarrow")
 
-                # Extract tokens from file contents (function/type names)
-                for content in t["files_after"].values():
+            table = pq.read_table(transitions_path)
+            records = table.to_pylist()
+
+            for r in records:
+                if r.get("action_target_symbol"):
+                    counter[r["action_target_symbol"]] += 1
+
+                files_after = json.loads(r.get("files_after_json", "{}"))
+                for content in files_after.values():
                     tokens = cls._extract_julia_tokens(content)
                     counter.update(tokens)
+        else:
+            # Load from JSONL
+            with open(transitions_path) as f:
+                for line in f:
+                    t = json.loads(line)
+                    # Extract tokens from action
+                    if t["action"].get("target_symbol"):
+                        counter[t["action"]["target_symbol"]] += 1
+
+                    # Extract tokens from file contents (function/type names)
+                    for content in t["files_after"].values():
+                        tokens = cls._extract_julia_tokens(content)
+                        counter.update(tokens)
 
         # Build vocabulary with special tokens
         token_to_id = {cls.PAD_TOKEN: cls.PAD_ID, cls.UNK_TOKEN: cls.UNK_ID}
@@ -159,7 +184,11 @@ class TransitionDataset(Dataset):
     """
     PyTorch Dataset for code transitions.
 
-    Loads transitions from JSONL and converts to model-ready format.
+    Loads transitions from JSONL or Parquet and converts to model-ready format.
+
+    Supports:
+    - .jsonl files: Line-delimited JSON
+    - .parquet files: Compressed columnar format (preferred for large datasets)
     """
 
     def __init__(
@@ -170,21 +199,68 @@ class TransitionDataset(Dataset):
         max_methods: int = 50,
         valid_only: bool = True,
     ):
-        self.transitions_path = transitions_path
+        self.transitions_path = Path(transitions_path)
         self.vocab = vocab
         self.max_nodes = max_nodes
         self.max_methods = max_methods
 
-        # Load transitions
+        # Load transitions based on file format
         self.transitions: list[dict] = []
-        with open(transitions_path) as f:
+
+        if self.transitions_path.suffix == ".parquet":
+            self._load_parquet(valid_only)
+        else:
+            self._load_jsonl(valid_only)
+
+        logger.info(f"Loaded {len(self.transitions)} transitions from {transitions_path}")
+
+    def _load_jsonl(self, valid_only: bool) -> None:
+        """Load transitions from JSONL file."""
+        with open(self.transitions_path) as f:
             for line in f:
                 t = json.loads(line)
                 if valid_only and not t.get("is_valid", False):
                     continue
                 self.transitions.append(t)
 
-        logger.info(f"Loaded {len(self.transitions)} transitions from {transitions_path}")
+    def _load_parquet(self, valid_only: bool) -> None:
+        """Load transitions from Parquet file."""
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            raise ImportError(
+                "PyArrow is required for Parquet support. "
+                "Install with: pip install pyarrow"
+            )
+
+        table = pq.read_table(self.transitions_path)
+        records = table.to_pylist()
+
+        for r in records:
+            if valid_only and not r.get("is_valid", False):
+                continue
+
+            # Reconstruct nested structure from flattened Parquet
+            transition = {
+                "repo": r["repo"],
+                "commit_sha": r["commit_sha"],
+                "parent_sha": r["parent_sha"],
+                "commit_message": r["commit_message"],
+                "commit_date": r["commit_date"],
+                "action": {
+                    "type": r["action_type"],
+                    "target_file": r.get("action_target_file"),
+                    "target_symbol": r.get("action_target_symbol"),
+                    "confidence": r.get("action_confidence", 0.0),
+                },
+                "files_before": json.loads(r["files_before_json"]),
+                "files_after": json.loads(r["files_after_json"]),
+                "source_files_changed": r.get("source_files_changed", []),
+                "test_files_changed": r.get("test_files_changed", []),
+                "lines_changed": r.get("lines_changed", 0),
+                "is_valid": r.get("is_valid", False),
+            }
+            self.transitions.append(transition)
 
     def __len__(self) -> int:
         return len(self.transitions)

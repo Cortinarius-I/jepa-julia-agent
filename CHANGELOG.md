@@ -2,6 +2,53 @@
 
 All notable changes to the JEPA-Julia-Agent project.
 
+## [0.3.2] - 2026-01-15 - Parquet Default & Codespaces Training
+
+Parquet is now the default output format for mining. Added Codespaces training script for scalable cloud training.
+
+### Added
+
+**Parquet Support**
+- `scripts/convert_to_parquet.py`: Bidirectional JSONL ↔ Parquet conversion
+- `tests/test_parquet.py`: 7 tests for Parquet functionality
+- `agent/data/transition_dataset.py`: Native Parquet loading support
+- **6x compression** compared to JSONL (tested on real data)
+
+**Codespaces Training**
+- `scripts/train_codespaces.sh`: Complete training script for GitHub Codespaces
+  - Mines 8-12 Julia packages directly to Parquet
+  - Trains JEPA model within resource limits (60 core-hours, 15GB)
+  - Three modes: `--quick` (2h), default (4-6h), `--full` (8h)
+  - Repos: JSON.jl, CSV.jl, ForwardDiff.jl, Optim.jl, Distributions.jl, Graphs.jl, HTTP.jl, Zygote.jl, and more
+
+### Changed
+
+**Mining Pipeline** (`scripts/mine_transitions.py`)
+- Default output format changed from JSONL to Parquet
+- Added `-f/--format` flag to select output format
+- Added `_write_parquet()` and `_write_jsonl()` functions
+- Returns statistics dictionary for programmatic use
+
+**Training Script** (`experiments/train_from_mined.py`)
+- Added `--max-transitions` flag for resource-limited training
+- Improved glob pattern expansion for multiple input files
+- Native support for both `.parquet` and `.jsonl` inputs
+
+**Data Loader** (`agent/data/transition_dataset.py`)
+- Added `_load_parquet()` method to TransitionDataset
+- `Vocabulary.build_from_transitions()` now supports Parquet
+- Auto-detects format based on file extension
+
+### Metrics
+
+| Metric | Value |
+|--------|-------|
+| Parquet compression ratio | **6.1x** |
+| Test count (Parquet) | 7/7 passing |
+| Test count (Julia bridge) | 10/10 passing |
+
+---
+
 ## [0.3.1] - 2026-01-15 - Improved Action Inference & Julia Bridge Testing
 
 Reduced UNKNOWN action rate to 0% and added comprehensive Julia bridge tests.

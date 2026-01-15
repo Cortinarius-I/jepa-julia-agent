@@ -913,8 +913,21 @@ def mine_transitions(
     output_path: Path,
     limit: int | None = None,
     use_julia_validation: bool = True,
-) -> None:
-    """Mine transitions from a repository and save to JSONL."""
+    output_format: str = "parquet",
+) -> dict:
+    """
+    Mine transitions from a repository.
+
+    Args:
+        repo_path: Path to the git repository
+        output_path: Output file path (.parquet or .jsonl)
+        limit: Maximum number of commits to process
+        use_julia_validation: Whether to validate Julia syntax
+        output_format: "parquet" (default) or "jsonl"
+
+    Returns:
+        Statistics dictionary with counts and action distribution
+    """
     config = MiningConfig(
         repo_path=repo_path,
         output_path=output_path,
@@ -926,23 +939,30 @@ def mine_transitions(
     valid_count = 0
     invalid_count = 0
     action_counts: dict[str, int] = {}
+    transitions: list[dict] = []
 
-    with open(output_path, "w") as f:
-        for transition in extractor.extract_transitions(limit=limit):
-            # Write to JSONL
-            f.write(json.dumps(transition.to_dict()) + "\n")
+    for transition in extractor.extract_transitions(limit=limit):
+        transitions.append(transition.to_dict())
 
-            # Track stats
-            if transition.is_valid:
-                valid_count += 1
-            else:
-                invalid_count += 1
+        # Track stats
+        if transition.is_valid:
+            valid_count += 1
+        else:
+            invalid_count += 1
 
-            action_type = transition.action["type"]
-            action_counts[action_type] = action_counts.get(action_type, 0) + 1
+        action_type = transition.action["type"]
+        action_counts[action_type] = action_counts.get(action_type, 0) + 1
 
-            if (valid_count + invalid_count) % 50 == 0:
-                logger.info(f"Processed {valid_count + invalid_count} commits...")
+        if (valid_count + invalid_count) % 50 == 0:
+            logger.info(f"Processed {valid_count + invalid_count} commits...")
+
+    # Write output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if output_format == "parquet" or output_path.suffix == ".parquet":
+        _write_parquet(transitions, output_path)
+    else:
+        _write_jsonl(transitions, output_path)
 
     # Print summary
     logger.info(f"\n{'='*50}")
@@ -950,10 +970,66 @@ def mine_transitions(
     logger.info(f"{'='*50}")
     logger.info(f"Valid transitions: {valid_count}")
     logger.info(f"Invalid transitions: {invalid_count}")
-    logger.info(f"Output: {output_path}")
+    logger.info(f"Output: {output_path} ({output_format})")
     logger.info(f"\nAction type distribution:")
     for action_type, count in sorted(action_counts.items(), key=lambda x: -x[1]):
         logger.info(f"  {action_type}: {count}")
+
+    return {
+        "valid": valid_count,
+        "invalid": invalid_count,
+        "total": valid_count + invalid_count,
+        "action_counts": action_counts,
+        "output_path": str(output_path),
+    }
+
+
+def _write_jsonl(transitions: list[dict], output_path: Path) -> None:
+    """Write transitions to JSONL format."""
+    with open(output_path, "w") as f:
+        for t in transitions:
+            f.write(json.dumps(t) + "\n")
+    logger.info(f"Wrote {len(transitions)} transitions to JSONL")
+
+
+def _write_parquet(transitions: list[dict], output_path: Path) -> None:
+    """Write transitions to Parquet format."""
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError:
+        logger.warning("PyArrow not installed, falling back to JSONL")
+        jsonl_path = output_path.with_suffix(".jsonl")
+        _write_jsonl(transitions, jsonl_path)
+        return
+
+    # Flatten for Parquet storage
+    records = []
+    for t in transitions:
+        records.append({
+            "repo": t["repo"],
+            "commit_sha": t["commit_sha"],
+            "parent_sha": t["parent_sha"],
+            "commit_message": t["commit_message"],
+            "commit_date": t["commit_date"],
+            "action_type": t["action"]["type"],
+            "action_target_file": t["action"].get("target_file"),
+            "action_target_symbol": t["action"].get("target_symbol"),
+            "action_confidence": t["action"].get("confidence", 0.0),
+            "files_before_json": json.dumps(t.get("files_before", {})),
+            "files_after_json": json.dumps(t.get("files_after", {})),
+            "source_files_changed": t.get("source_files_changed", []),
+            "test_files_changed": t.get("test_files_changed", []),
+            "lines_changed": t.get("lines_changed", 0),
+            "is_valid": t.get("is_valid", False),
+            "validation_errors_json": json.dumps(t.get("validation_errors", [])),
+        })
+
+    table = pa.Table.from_pylist(records)
+    pq.write_table(table, output_path, compression="snappy")
+
+    file_size = output_path.stat().st_size
+    logger.info(f"Wrote {len(transitions)} transitions to Parquet ({file_size / 1024:.1f} KB)")
 
 
 if __name__ == "__main__":
@@ -961,15 +1037,19 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Mine transitions from Julia git history")
     parser.add_argument("repo_path", type=Path, help="Path to the repository")
-    parser.add_argument("--output", "-o", type=Path, help="Output JSONL file")
+    parser.add_argument("--output", "-o", type=Path, help="Output file (default: .parquet)")
     parser.add_argument("--limit", "-n", type=int, help="Limit number of commits")
+    parser.add_argument("--format", "-f", choices=["parquet", "jsonl"], default="parquet",
+                        help="Output format (default: parquet)")
     parser.add_argument("--no-julia-validation", action="store_true",
                         help="Skip Julia syntax validation (faster but less accurate)")
 
     args = parser.parse_args()
 
+    # Default output path based on format
     if args.output is None:
-        args.output = Path(f"data/transitions/{args.repo_path.name}.jsonl")
+        ext = ".parquet" if args.format == "parquet" else ".jsonl"
+        args.output = Path(f"data/transitions/{args.repo_path.name}{ext}")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -978,4 +1058,5 @@ if __name__ == "__main__":
         args.output,
         args.limit,
         use_julia_validation=not args.no_julia_validation,
+        output_format=args.format,
     )
