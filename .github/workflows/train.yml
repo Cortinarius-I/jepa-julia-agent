@@ -1,0 +1,198 @@
+name: Train JEPA Model
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Training mode'
+        required: true
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - default
+          - full
+      max_repos:
+        description: 'Max repositories to mine (overrides mode)'
+        required: false
+        type: number
+      epochs:
+        description: 'Training epochs (overrides mode)'
+        required: false
+        type: number
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hour max for free tier
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install torch-geometric pyarrow typer rich networkx
+          pip install -e .
+
+      - name: Configure training parameters
+        id: config
+        run: |
+          MODE="${{ inputs.mode }}"
+
+          # Default values per mode
+          if [ "$MODE" = "quick" ]; then
+            MAX_REPOS=4
+            EPOCHS=25
+            MAX_COMMITS=200
+          elif [ "$MODE" = "full" ]; then
+            MAX_REPOS=12
+            EPOCHS=100
+            MAX_COMMITS=500
+          else
+            MAX_REPOS=8
+            EPOCHS=50
+            MAX_COMMITS=300
+          fi
+
+          # Override with inputs if provided
+          if [ -n "${{ inputs.max_repos }}" ]; then
+            MAX_REPOS=${{ inputs.max_repos }}
+          fi
+          if [ -n "${{ inputs.epochs }}" ]; then
+            EPOCHS=${{ inputs.epochs }}
+          fi
+
+          echo "max_repos=$MAX_REPOS" >> $GITHUB_OUTPUT
+          echo "epochs=$EPOCHS" >> $GITHUB_OUTPUT
+          echo "max_commits=$MAX_COMMITS" >> $GITHUB_OUTPUT
+
+          echo "Configuration:"
+          echo "  Mode: $MODE"
+          echo "  Max repos: $MAX_REPOS"
+          echo "  Epochs: $EPOCHS"
+          echo "  Max commits per repo: $MAX_COMMITS"
+
+      - name: Create directories
+        run: |
+          mkdir -p repos transitions checkpoints
+
+      - name: Mine Julia repositories
+        run: |
+          REPOS=(
+            "https://github.com/JuliaCollections/DataStructures.jl"
+            "https://github.com/quinnj/JSON3.jl"
+            "https://github.com/JuliaIO/JSON.jl"
+            "https://github.com/JuliaData/CSV.jl"
+            "https://github.com/JuliaDiff/ForwardDiff.jl"
+            "https://github.com/JuliaNLSolvers/Optim.jl"
+            "https://github.com/JuliaStats/Distributions.jl"
+            "https://github.com/JuliaGraphs/Graphs.jl"
+            "https://github.com/JuliaWeb/HTTP.jl"
+            "https://github.com/FluxML/Zygote.jl"
+            "https://github.com/fonsp/Pluto.jl"
+            "https://github.com/JuliaData/DataFrames.jl"
+          )
+
+          MAX_REPOS=${{ steps.config.outputs.max_repos }}
+          MAX_COMMITS=${{ steps.config.outputs.max_commits }}
+
+          for i in "${!REPOS[@]}"; do
+            if [ $i -ge $MAX_REPOS ]; then
+              echo "Reached max repos limit ($MAX_REPOS)"
+              break
+            fi
+
+            REPO_URL="${REPOS[$i]}"
+            REPO_NAME=$(basename "$REPO_URL" .git)
+
+            echo ""
+            echo "[$((i+1))/$MAX_REPOS] Processing $REPO_NAME..."
+
+            # Clone with limited depth
+            if [ ! -d "repos/$REPO_NAME" ]; then
+              echo "  Cloning (depth=$MAX_COMMITS)..."
+              git clone --depth=$MAX_COMMITS "$REPO_URL" "repos/$REPO_NAME" 2>/dev/null || true
+            fi
+
+            # Mine transitions to Parquet
+            OUTPUT_FILE="transitions/${REPO_NAME}.parquet"
+            if [ ! -f "$OUTPUT_FILE" ] && [ -d "repos/$REPO_NAME" ]; then
+              echo "  Mining transitions..."
+              python scripts/mine_transitions.py \
+                "repos/$REPO_NAME" \
+                -o "$OUTPUT_FILE" \
+                -n $MAX_COMMITS \
+                2>&1 | tail -5 || true
+            fi
+
+            if [ -f "$OUTPUT_FILE" ]; then
+              SIZE=$(du -h "$OUTPUT_FILE" | cut -f1)
+              echo "  Output: $OUTPUT_FILE ($SIZE)"
+            fi
+          done
+
+          echo ""
+          echo "Mining complete. Parquet files:"
+          ls -lh transitions/*.parquet 2>/dev/null || echo "No parquet files found"
+
+      - name: Train JEPA model
+        run: |
+          EPOCHS=${{ steps.config.outputs.epochs }}
+
+          echo "Starting training with $EPOCHS epochs..."
+
+          python experiments/train_from_mined.py \
+            transitions/*.parquet \
+            --save-dir checkpoints \
+            --epochs $EPOCHS \
+            --batch-size 16 \
+            --lr 1e-4 \
+            --val-split 0.1
+
+      - name: Upload model checkpoint
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jepa-model-${{ github.run_number }}
+          path: |
+            checkpoints/best.pt
+            checkpoints/vocab.json
+            checkpoints/config.json
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload training data
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transitions-${{ github.run_number }}
+          path: transitions/*.parquet
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Training summary
+        run: |
+          echo "=============================================="
+          echo "Training Complete!"
+          echo "=============================================="
+          echo ""
+          echo "Artifacts uploaded:"
+          echo "  - jepa-model-${{ github.run_number }} (checkpoints)"
+          echo "  - transitions-${{ github.run_number }} (training data)"
+          echo ""
+          echo "Download with:"
+          echo "  gh run download ${{ github.run_id }} -n jepa-model-${{ github.run_number }}"
+          echo ""
+          if [ -f checkpoints/best.pt ]; then
+            echo "Model size: $(du -h checkpoints/best.pt | cut -f1)"
+          fi
+          echo "Total transitions: $(ls -1 transitions/*.parquet 2>/dev/null | wc -l) files"
