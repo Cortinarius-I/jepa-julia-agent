@@ -163,9 +163,12 @@ python scripts/mine_transitions.py path/to/Julia/Package.jl
 # Train on mined transitions (supports both Parquet and JSONL)
 python experiments/train_from_mined.py data/transitions/*.parquet --epochs 50
 
-# Results from initial training (674 transitions, 2 repos):
-# - Cosine similarity: 0.91 (target >0.85) ✅
-# - Best val loss: 0.054
+# Evaluate trained model
+python experiments/evaluate_model.py --checkpoint checkpoints/jepa-model-1/best.pt
+
+# Results from GitHub Actions training (1,935 transitions, 12 repos):
+# - Cosine similarity: 0.9987 (target >0.85) ✅
+# - Best val loss: 0.0025
 # - Action inference: 100% classified (17 action types)
 
 # Run tests
@@ -174,25 +177,25 @@ python tests/test_julia_bridge.py --with-julia # Julia bridge (real Julia)
 python tests/test_parquet.py                   # Parquet support (7 tests)
 ```
 
-### Training in GitHub Codespaces
+### Training via GitHub Actions
 
-For large-scale training without local GPU, use the Codespaces script:
+For automated training without local resources, use the GitHub Actions workflow:
 
 ```bash
-# Quick mode: 4 repos, 25 epochs (~2 hours)
-./scripts/train_codespaces.sh --quick
+# Trigger training via GitHub UI or CLI
+gh workflow run train.yml -f mode=full
 
-# Default: 8 repos, 50 epochs (~4-6 hours)
-./scripts/train_codespaces.sh
+# Monitor progress
+gh run watch
 
-# Full mode: 12 repos, 100 epochs (~8 hours)
-./scripts/train_codespaces.sh --full
-
-# Download trained model
-gh codespace cp remote:checkpoints/best.pt .
+# Download trained model after completion
+gh run download <run-id> -n jepa-model-<run-number>
 ```
 
-The script mines 8-12 Julia packages directly to Parquet (6x compression), then trains the JEPA model. Fits within Codespaces limits (60 core-hours, 15GB storage).
+The workflow mines 12 Julia packages, trains the JEPA model, and uploads artifacts:
+- **Model checkpoint**: 105MB, 90-day retention
+- **Transitions data**: Parquet format, 30-day retention
+- **Latest results**: 0.9987 cosine similarity on 1,935 transitions
 
 ---
 

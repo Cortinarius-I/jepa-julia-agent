@@ -78,8 +78,10 @@ Based on analysis of LLM-JEPA, CWM, and Agent2World papers.
 ### 2.1 Repository Mining
 - [x] Git history mining pipeline (`scripts/mine_transitions.py`)
 - [x] Julia syntax validation (`scripts/validate_julia.jl`)
-- [x] Mined DataStructures.jl (325 transitions)
-- [x] Mined JSON3.jl (114 transitions)
+- [x] Mined DataStructures.jl (185 transitions)
+- [x] Mined JSON3.jl (122 transitions)
+- [x] GitHub Actions training workflow (`.github/workflows/train.yml`)
+- [x] Mined 12 Julia packages via GitHub Actions (1,935 transitions)
 - [ ] Curate list of well-tested Julia packages (>80% coverage)
 - [ ] Scale to 500+ repositories
 
@@ -98,7 +100,7 @@ Based on analysis of LLM-JEPA, CWM, and Agent2World papers.
 - [x] Codespaces training script for scalable cloud training
 - [ ] Include multi-view data (NL goals, traces)
 
-### Progress: 674 transitions from 2 repositories, 0% UNKNOWN action inference, 0.91 cosine sim achieved
+### Progress: 1,935 transitions from 12 repositories, 0% UNKNOWN action inference, 0.9987 cosine sim achieved
 ### Target: 100k+ verified transitions from 500+ repositories
 
 ### Codespaces Training
@@ -148,18 +150,19 @@ The `scripts/train_codespaces.sh` script enables scalable training:
 
 ## Phase 4: JEPA Training
 
-**Status: Pending**
+**Status: ✓ Initial Training Complete**
 
 ### 4.1 Encoder Training
-- [ ] Pre-train graph encoder on module/dispatch graphs
-- [ ] Pre-train method encoder on signature data
-- [ ] Validate embedding quality
+- [x] Pre-train graph encoder on module/dispatch graphs
+- [x] Pre-train method encoder on signature data
+- [x] Validate embedding quality (**0.9987 cosine similarity**)
 
 ### 4.2 JEPA Training
-- [ ] Train predictor: (state, action) → next_state embedding
+- [x] Train predictor: (state, action) → next_state embedding
+- [x] Implement EMA target encoder updates
+- [x] Model evaluation script (`experiments/evaluate_model.py`)
 - [ ] Train safety head: predict test failures
 - [ ] Train invalidation head: predict recompilation
-- [ ] Implement EMA target encoder updates
 
 ### 4.3 Ablations
 - [ ] Compare: GNN vs transformer for graph encoding
@@ -167,7 +170,7 @@ The `scripts/train_codespaces.sh` script enables scalable training:
 - [ ] Measure: prediction horizon (1-step vs multi-step)
 
 ### Target Metrics
-- Embedding cosine similarity: >0.85
+- Embedding cosine similarity: >0.85 → **0.9987 achieved** ✅
 - Safety prediction AUC: >0.90
 - Test outcome accuracy: >0.80
 

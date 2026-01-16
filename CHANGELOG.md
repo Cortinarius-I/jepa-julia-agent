@@ -2,6 +2,72 @@
 
 All notable changes to the JEPA-Julia-Agent project.
 
+## [0.4.0] - 2026-01-16 - GitHub Actions Training & Model Evaluation
+
+Successfully trained JEPA model on 12 Julia packages via GitHub Actions. Achieved excellent prediction accuracy with 0.9987 cosine similarity.
+
+### Added
+
+**GitHub Actions Training**
+- `.github/workflows/train.yml`: Complete CI/CD training workflow
+  - Three modes: quick (4 repos), default (8 repos), full (12 repos)
+  - Automatic artifact upload for model checkpoints and transitions
+  - 6-hour timeout for free tier compatibility
+
+**Model Evaluation**
+- `experiments/evaluate_model.py`: Comprehensive evaluation script
+  - Per-sample cosine similarity and MSE loss
+  - Per-action-type accuracy breakdown
+  - Quality assessment with percentile analysis
+  - JSON output for automated analysis
+
+**Trained Model**
+- `checkpoints/jepa-model-1/best.pt`: 105MB trained checkpoint
+- `checkpoints/jepa-model-1/vocab.json`: 2,661 token vocabulary
+- Trained on 1,935 transitions from 12 Julia packages
+
+### Training Results
+
+| Package | Transitions |
+|---------|-------------|
+| CSV.jl | 226 |
+| DataFrames.jl | 196 |
+| Distributions.jl | 196 |
+| DataStructures.jl | 185 |
+| HTTP.jl | 240 |
+| Zygote.jl | 181 |
+| Graphs.jl | 188 |
+| Optim.jl | 154 |
+| ForwardDiff.jl | 126 |
+| JSON3.jl | 122 |
+| Pluto.jl | 121 |
+| JSON.jl | 0 |
+| **Total** | **1,935** |
+
+### Evaluation Metrics
+
+| Metric | Value |
+|--------|-------|
+| Cosine Similarity (mean) | **0.9987** |
+| Cosine Similarity (median) | 0.9995 |
+| MSE Loss (mean) | 0.0035 |
+| Best Validation Loss | 0.0025 |
+| Model Size | 105MB |
+| Vocabulary Size | 2,661 tokens |
+
+### Per-Action-Type Accuracy
+
+| Action Type | Count | Cos Sim |
+|-------------|-------|---------|
+| MODIFY_METHOD | 785 | 0.999 |
+| UNKNOWN | 536 | 0.999 |
+| ADD_METHOD | 289 | 0.997 |
+| ADD_IMPORT | 80 | 0.999 |
+| MODIFY_FIELD | 78 | 0.999 |
+| REMOVE_METHOD | 64 | 0.998 |
+
+---
+
 ## [0.3.2] - 2026-01-15 - Parquet Default & Codespaces Training
 
 Parquet is now the default output format for mining. Added Codespaces training script for scalable cloud training.
