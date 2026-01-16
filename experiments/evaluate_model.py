@@ -71,8 +71,11 @@ def evaluate_model(
 
     all_cos_sims = []
     all_mse_losses = []
+    all_action_preds = []
+    all_action_targets = []
     per_action_cos_sims = defaultdict(list)
     per_action_mse = defaultdict(list)
+    per_action_pred_correct = defaultdict(list)
 
     with torch.no_grad():
         for batch in dataloader:
@@ -94,6 +97,17 @@ def evaluate_model(
             # MSE per sample
             mse_per_sample = ((predicted - target) ** 2).mean(dim=-1)
             all_mse_losses.extend(mse_per_sample.cpu().numpy())
+
+            # Action type prediction accuracy (if model has this head)
+            if "action_type_logits" in result:
+                action_preds = result["action_type_logits"].argmax(dim=-1).cpu().numpy()
+                action_targets = batch["action_type"].cpu().numpy()
+                all_action_preds.extend(action_preds)
+                all_action_targets.extend(action_targets)
+
+                # Per-action-type prediction accuracy
+                for i, (pred, target_type) in enumerate(zip(action_preds, action_targets)):
+                    per_action_pred_correct[target_type].append(int(pred == target_type))
 
             # Per-action-type metrics
             action_types = batch["action_type"].cpu().numpy()
@@ -126,18 +140,36 @@ def evaluate_model(
         "per_action_type": {},
     }
 
+    # Action type prediction accuracy (if available)
+    if all_action_preds:
+        all_action_preds = np.array(all_action_preds)
+        all_action_targets = np.array(all_action_targets)
+        overall_acc = (all_action_preds == all_action_targets).mean()
+        results["action_type_prediction"] = {
+            "accuracy": float(overall_acc),
+            "num_correct": int((all_action_preds == all_action_targets).sum()),
+            "num_total": len(all_action_preds),
+        }
+
     # Per-action-type results
     for action_type in sorted(per_action_cos_sims.keys()):
         action_name = ACTION_TYPES[action_type] if action_type < len(ACTION_TYPES) else f"unknown_{action_type}"
         cos_sims = np.array(per_action_cos_sims[action_type])
         mse_vals = np.array(per_action_mse[action_type])
 
-        results["per_action_type"][action_name] = {
+        action_result = {
             "count": len(cos_sims),
             "cosine_similarity_mean": float(cos_sims.mean()),
             "cosine_similarity_std": float(cos_sims.std()),
             "mse_mean": float(mse_vals.mean()),
         }
+
+        # Add prediction accuracy if available
+        if action_type in per_action_pred_correct:
+            pred_correct = np.array(per_action_pred_correct[action_type])
+            action_result["prediction_accuracy"] = float(pred_correct.mean())
+
+        results["per_action_type"][action_name] = action_result
 
     return results
 
@@ -163,14 +195,31 @@ def print_results(results: dict):
     print(f"  Median:    {mse['median']:.6f}")
     print(f"  Range:     [{mse['min']:.6f}, {mse['max']:.6f}]")
 
+    # Action type prediction accuracy (if available)
+    if "action_type_prediction" in results:
+        print("\n--- Action Type Prediction (self-supervised) ---")
+        atp = results["action_type_prediction"]
+        print(f"  Accuracy:  {atp['accuracy']:.2%} ({atp['num_correct']}/{atp['num_total']})")
+
     print("\n--- Per Action Type ---")
-    print(f"{'Action Type':<20} {'Count':>8} {'Cos Sim':>10} {'MSE':>12}")
-    print("-" * 52)
-    for action_name, stats in sorted(results["per_action_type"].items(),
-                                      key=lambda x: -x[1]["count"]):
-        print(f"{action_name:<20} {stats['count']:>8} "
-              f"{stats['cosine_similarity_mean']:>10.4f} "
-              f"{stats['mse_mean']:>12.6f}")
+    has_pred_acc = any("prediction_accuracy" in stats for stats in results["per_action_type"].values())
+    if has_pred_acc:
+        print(f"{'Action Type':<20} {'Count':>8} {'Cos Sim':>10} {'Pred Acc':>10}")
+        print("-" * 50)
+        for action_name, stats in sorted(results["per_action_type"].items(),
+                                          key=lambda x: -x[1]["count"]):
+            pred_acc = stats.get("prediction_accuracy", 0)
+            print(f"{action_name:<20} {stats['count']:>8} "
+                  f"{stats['cosine_similarity_mean']:>10.4f} "
+                  f"{pred_acc:>10.2%}")
+    else:
+        print(f"{'Action Type':<20} {'Count':>8} {'Cos Sim':>10} {'MSE':>12}")
+        print("-" * 52)
+        for action_name, stats in sorted(results["per_action_type"].items(),
+                                          key=lambda x: -x[1]["count"]):
+            print(f"{action_name:<20} {stats['count']:>8} "
+                  f"{stats['cosine_similarity_mean']:>10.4f} "
+                  f"{stats['mse_mean']:>12.6f}")
 
     # Quality assessment
     print("\n--- Quality Assessment ---")

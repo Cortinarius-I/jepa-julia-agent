@@ -117,6 +117,15 @@ class SimplifiedJEPA(nn.Module):
             nn.Linear(hidden_dim, output_dim),
         )
 
+        # Action type prediction head: predict what action was taken from state transition
+        # This is a self-supervised auxiliary task
+        self.action_type_head = nn.Sequential(
+            nn.Linear(output_dim * 2, hidden_dim),  # takes (before_embed, after_embed)
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_action_types),
+        )
+
         # Target encoder (EMA copy)
         self.target_encoder = self._build_target_encoder(node_dim, hidden_dim, output_dim,
                                                           num_gnn_layers, num_heads, dropout, vocab_size)
@@ -303,18 +312,28 @@ class SimplifiedJEPA(nn.Module):
                 use_target=True,
             )
 
-        # Compute loss
+        # Compute embedding loss
         embed_loss = F.mse_loss(predicted_embed, target_embed)
+
+        # Predict action type from state transition (self-supervised auxiliary task)
+        # Uses current state and predicted next state embeddings
+        state_transition = torch.cat([current_embed, predicted_embed], dim=-1)
+        action_type_logits = self.action_type_head(state_transition)
+        action_type_loss = F.cross_entropy(action_type_logits, batch["action_type"])
 
         # Compute cosine similarity for monitoring
         with torch.no_grad():
             cos_sim = F.cosine_similarity(predicted_embed, target_embed, dim=-1).mean()
+            action_type_acc = (action_type_logits.argmax(dim=-1) == batch["action_type"]).float().mean()
 
         return {
             "embed_loss": embed_loss,
+            "action_type_loss": action_type_loss,
             "predicted_embed": predicted_embed,
             "target_embed": target_embed,
             "cosine_similarity": cos_sim,
+            "action_type_logits": action_type_logits,
+            "action_type_acc": action_type_acc,
         }
 
 
@@ -377,15 +396,16 @@ class MinedDataTrainer:
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        history = {"train_loss": [], "val_loss": [], "cosine_sim": []}
+        history = {"train_loss": [], "val_loss": [], "cosine_sim": [], "action_acc": []}
 
         for epoch in range(self.config.num_epochs):
-            train_loss, cos_sim = self._train_epoch()
+            train_loss, cos_sim, action_acc = self._train_epoch()
             history["train_loss"].append(train_loss)
             history["cosine_sim"].append(cos_sim)
+            history["action_acc"].append(action_acc)
 
             if self.val_loader:
-                val_loss, val_cos_sim = self._validate()
+                val_loss, val_cos_sim, val_action_acc = self._validate()
                 history["val_loss"].append(val_loss)
 
                 if val_loss < self.best_val_loss:
@@ -395,12 +415,13 @@ class MinedDataTrainer:
                 logger.info(
                     f"Epoch {epoch + 1}/{self.config.num_epochs} | "
                     f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
-                    f"Cos Sim: {cos_sim:.4f}"
+                    f"Cos Sim: {cos_sim:.4f} | Action Acc: {action_acc:.2%}"
                 )
             else:
                 logger.info(
                     f"Epoch {epoch + 1}/{self.config.num_epochs} | "
-                    f"Train Loss: {train_loss:.4f} | Cos Sim: {cos_sim:.4f}"
+                    f"Train Loss: {train_loss:.4f} | Cos Sim: {cos_sim:.4f} | "
+                    f"Action Acc: {action_acc:.2%}"
                 )
 
             if (epoch + 1) % self.config.save_every == 0:
@@ -409,18 +430,21 @@ class MinedDataTrainer:
         self._save_checkpoint(save_dir / "final.pt")
         return history
 
-    def _train_epoch(self) -> tuple[float, float]:
+    def _train_epoch(self) -> tuple[float, float, float]:
         """Train for one epoch."""
         self.model.train()
         total_loss = 0.0
         total_cos_sim = 0.0
+        total_action_acc = 0.0
         num_batches = 0
 
         for batch in self.train_loader:
             batch = self._to_device(batch)
 
             result = self.model(batch)
-            loss = result["embed_loss"]
+
+            # Combined loss: embedding prediction + action type prediction
+            loss = result["embed_loss"] + 0.1 * result["action_type_loss"]
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -434,30 +458,35 @@ class MinedDataTrainer:
 
             total_loss += loss.item()
             total_cos_sim += result["cosine_similarity"].item()
+            total_action_acc += result["action_type_acc"].item()
             num_batches += 1
             self.global_step += 1
 
             if self.global_step % self.config.log_every == 0:
                 logger.debug(f"Step {self.global_step}: loss={loss.item():.4f}")
 
-        return total_loss / num_batches, total_cos_sim / num_batches
+        return total_loss / num_batches, total_cos_sim / num_batches, total_action_acc / num_batches
 
-    def _validate(self) -> tuple[float, float]:
+    def _validate(self) -> tuple[float, float, float]:
         """Run validation."""
         self.model.eval()
         total_loss = 0.0
         total_cos_sim = 0.0
+        total_action_acc = 0.0
         num_batches = 0
 
         with torch.no_grad():
             for batch in self.val_loader:
                 batch = self._to_device(batch)
                 result = self.model(batch)
-                total_loss += result["embed_loss"].item()
+                # Combined loss for validation
+                loss = result["embed_loss"] + 0.1 * result["action_type_loss"]
+                total_loss += loss.item()
                 total_cos_sim += result["cosine_similarity"].item()
+                total_action_acc += result["action_type_acc"].item()
                 num_batches += 1
 
-        return total_loss / num_batches, total_cos_sim / num_batches
+        return total_loss / num_batches, total_cos_sim / num_batches, total_action_acc / num_batches
 
     def _to_device(self, batch: dict) -> dict:
         """Move batch to device."""
@@ -609,6 +638,7 @@ def main():
     if history['val_loss']:
         logger.info(f"Best val loss: {min(history['val_loss']):.4f}")
     logger.info(f"Final cosine similarity: {history['cosine_sim'][-1]:.4f}")
+    logger.info(f"Final action type accuracy: {history['action_acc'][-1]:.2%}")
 
 
 if __name__ == "__main__":
