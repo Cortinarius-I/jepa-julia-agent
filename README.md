@@ -78,6 +78,7 @@ jepa-julia-agent/
 │   │   └── multi_view.py      # Multi-view JEPA (LLM-JEPA)
 │   ├── planner.py
 │   ├── agent_loop.py
+│   ├── julia_parser.py        # Python-based Julia parsing
 │   ├── test_generator.py      # Adaptive test generation
 │   ├── rejection_sampling.py  # Verifier-guided filtering
 │   ├── knowledge_synthesis.py # Doc retrieval
@@ -104,8 +105,9 @@ jepa-julia-agent/
 ├── experiments/
 │   ├── train_jepa.py
 │   ├── train_integrated.py    # Combined pipeline (all 5 recs)
-│   ├── train_from_mined.py    # NEW: Train from mined transitions
-│   └── eval_predictions.py
+│   ├── train_from_mined.py    # Train from mined transitions
+│   ├── evaluate_model.py      # Model evaluation & metrics
+│   └── analyze_embeddings.py  # SVD analysis of embedding structure
 │
 └── docs/
     ├── design.md
@@ -166,9 +168,13 @@ python experiments/train_from_mined.py data/transitions/*.parquet --epochs 50
 # Evaluate trained model
 python experiments/evaluate_model.py --checkpoint checkpoints/jepa-model-1/best.pt
 
-# Results from GitHub Actions training (1,935 transitions, 12 repos):
-# - Cosine similarity: 0.9987 (target >0.85) ✅
-# - Best val loss: 0.0025
+# Analyze embedding structure (SVD analysis)
+python experiments/analyze_embeddings.py --checkpoint checkpoints/test-action-head/best.pt
+
+# Results from training (1,935 transitions, 12 repos):
+# - Cosine similarity: 0.9862 (target >0.85) ✅
+# - Action type accuracy: 82.94% (target >70%) ✅
+# - Linear R² (SVD analysis): 0.96 (highly structured embeddings) ✅
 # - Action inference: 100% classified (17 action types)
 
 # Run tests
@@ -195,7 +201,7 @@ gh run download <run-id> -n jepa-model-<run-number>
 The workflow mines 12 Julia packages, trains the JEPA model, and uploads artifacts:
 - **Model checkpoint**: 105MB, 90-day retention
 - **Transitions data**: Parquet format, 30-day retention
-- **Latest results**: 0.9987 cosine similarity on 1,935 transitions
+- **Latest results**: 0.9862 cosine similarity, 82.94% action accuracy on 1,935 transitions
 
 ---
 

@@ -114,22 +114,25 @@ The `scripts/train_codespaces.sh` script enables scalable training:
 
 ## Phase 3: World State Extraction
 
-**Status: Pending**
+**Status: ✓ Basic Extraction Complete (Static Analysis)**
 
 ### 3.1 Module Graph Extraction
-- [ ] Use CodeTracking.jl to find all modules
-- [ ] Extract exports, imports, dependencies
-- [ ] Build dependency DAG
+- [x] Python-based module extraction (`agent/julia_parser.py`)
+- [x] Extract exports, imports, dependencies
+- [x] Build dependency DAG
+- [ ] Use CodeTracking.jl for runtime analysis (future)
 
 ### 3.2 Method Table Extraction
-- [ ] Enumerate methods via Base.methods
-- [ ] Extract signatures (name, types, where clauses)
-- [ ] Track source locations
+- [x] Extract function signatures from source
+- [x] Parse type annotations
+- [x] Track source locations and line numbers
+- [ ] Enumerate methods via Base.methods (requires Julia runtime)
 
 ### 3.3 Dispatch Graph
-- [ ] Analyze method ambiguities
-- [ ] Build call graph via static analysis
-- [ ] Detect specialization patterns
+- [x] Build call graph via static analysis
+- [x] Extract caller-callee relationships
+- [ ] Analyze method ambiguities (requires runtime)
+- [ ] Detect specialization patterns (requires runtime)
 
 ### 3.4 Type Inference State
 - [ ] Integrate with Cthulhu.jl for @code_warntype
@@ -137,8 +140,8 @@ The `scripts/train_codespaces.sh` script enables scalable training:
 - [ ] Detect type instabilities
 
 ### 3.5 Test State
-- [ ] Parse Test.jl test sets
-- [ ] Track pass/fail per test
+- [x] Scan test files and count @test macros
+- [ ] Parse Test.jl test sets for detailed results
 - [ ] Measure coverage via Coverage.jl
 
 ### 3.6 Invalidation Tracking
@@ -146,33 +149,47 @@ The `scripts/train_codespaces.sh` script enables scalable training:
 - [ ] Track method invalidations on edits
 - [ ] Build invalidation graph
 
+### Progress: Static extraction complete (Python + Julia). Runtime analysis pending.
+
 ---
 
 ## Phase 4: JEPA Training
 
-**Status: ✓ Initial Training Complete**
+**Status: ✓ Full Training Pipeline Complete**
 
 ### 4.1 Encoder Training
 - [x] Pre-train graph encoder on module/dispatch graphs
 - [x] Pre-train method encoder on signature data
-- [x] Validate embedding quality (**0.9987 cosine similarity**)
+- [x] Validate embedding quality (**0.9862 cosine similarity**)
+- [x] Rich world state encoding (module graph + dispatch graph)
 
 ### 4.2 JEPA Training
 - [x] Train predictor: (state, action) → next_state embedding
 - [x] Implement EMA target encoder updates
 - [x] Model evaluation script (`experiments/evaluate_model.py`)
-- [ ] Train safety head: predict test failures
+- [x] Action type prediction head (**82.94% accuracy**)
+- [x] SVD embedding analysis (`experiments/analyze_embeddings.py`)
+- [ ] Train safety head: predict test failures (requires labeled data)
 - [ ] Train invalidation head: predict recompilation
 
-### 4.3 Ablations
+### 4.3 SVD Analysis (LLM-JEPA Verification)
+- [x] SVD decomposition of state transitions
+- [x] Linearity analysis: **R² = 0.9639** (highly linear)
+- [x] Effective rank analysis: 48 dimensions (out of 256)
+- [x] Top-10 variance: 73.7% (concentrated subspace)
+- [x] Per-action-type breakdown
+
+### 4.4 Ablations
 - [ ] Compare: GNN vs transformer for graph encoding
 - [ ] Compare: joint vs separate state/action encoders
 - [ ] Measure: prediction horizon (1-step vs multi-step)
 
 ### Target Metrics
-- Embedding cosine similarity: >0.85 → **0.9987 achieved** ✅
-- Safety prediction AUC: >0.90
-- Test outcome accuracy: >0.80
+- Embedding cosine similarity: >0.85 → **0.9862 achieved** ✅
+- Action type prediction: >70% → **82.94% achieved** ✅
+- Linear R² (embedding structure): high → **0.9639 achieved** ✅
+- Safety prediction AUC: >0.90 (pending labeled data)
+- Test outcome accuracy: >0.80 (pending)
 
 ---
 
@@ -332,22 +349,34 @@ Based on analysis of recent papers (LLM-JEPA, CWM, Agent2World), we've identifie
 ## Open Questions
 
 1. **Embedding Dimensionality**: What's the right size for state embeddings? 256? 512? 1024?
+   - **Finding**: 256 dimensions work well, with effective rank of ~48 (transitions use subset)
 
 2. **Action Granularity**: Are 14 action types enough? Too many?
+   - **Finding**: 17 action types achieve 82.94% classification accuracy. Granularity appears good.
 
 3. **Graph Encoding**: GAT vs GraphSAGE vs GIN for module graphs?
+   - **Current**: GAT with 3 layers, 4 attention heads works well
 
 4. **Training Data Scale**: How many transitions needed for good generalization?
+   - **Finding**: 1,935 transitions achieve 0.9862 cosine sim. More data likely helps.
 
 5. **Multi-Step Planning**: How far ahead can JEPA predict accurately?
+   - **Status**: Not yet tested. Single-step prediction excellent.
 
 6. **Transfer Learning**: Can a JEPA trained on one repo transfer to others?
+   - **Finding**: Model trained on 12 repos generalizes across package types
 
-7. **View Selection** (NEW): Which view pairs provide the strongest training signal for Julia?
+7. **View Selection**: Which view pairs provide the strongest training signal for Julia?
+   - **Finding**: (before_state, after_state) with action conditioning works excellently
 
-8. **Trace Granularity** (NEW): Line-level vs. method-level vs. statement-level traces?
+8. **Trace Granularity**: Line-level vs. method-level vs. statement-level traces?
+   - **Status**: Not yet implemented
 
-9. **Test Generation** (NEW): How to generate meaningful Julia tests automatically?
+9. **Test Generation**: How to generate meaningful Julia tests automatically?
+   - **Status**: Test scaffolding exists, not yet integrated with training
+
+10. **Embedding Structure** (ANSWERED): Does JEPA create structured embeddings?
+    - **Finding**: Yes! R²=0.96 confirms near-linear transitions, 73.7% variance in top 10 dims
 
 ---
 

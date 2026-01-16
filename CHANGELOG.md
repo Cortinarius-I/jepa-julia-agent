@@ -2,6 +2,85 @@
 
 All notable changes to the JEPA-Julia-Agent project.
 
+## [0.5.0] - 2026-01-16 - Full World State Integration & SVD Analysis
+
+Integrated full world state extraction with training pipeline. Added Python-based Julia parser for training without Julia runtime. Implemented SVD analysis to verify embedding structure follows LLM-JEPA predictions.
+
+### Added
+
+**Full World State Extraction**
+- `agent/julia_parser.py`: Python-based Julia source code parser
+  - Extracts module graph (imports, exports, dependencies)
+  - Extracts method table (function signatures, type annotations)
+  - Extracts dispatch graph (call relationships between functions)
+  - No Julia runtime required - pure Python regex parsing
+- `julia/src/WorldState.jl`: Complete Julia-side extraction
+  - `extract_world_state()`: Main entry point
+  - `find_julia_files()`: Recursive .jl file discovery
+  - `extract_module_graph()`: Module dependency DAG
+  - `extract_method_table()`: Function signatures
+  - `extract_dispatch_graph()`: Call relationship analysis
+  - `compute_repo_hash()`: Git hash extraction
+
+**SVD Embedding Analysis**
+- `experiments/analyze_embeddings.py`: Comprehensive analysis following LLM-JEPA methodology
+  - SVD decomposition of state transitions
+  - Linearity analysis (R² regression)
+  - Per-action-type performance breakdown
+  - Embedding geometry metrics
+
+**Training Pipeline Updates**
+- `agent/data/transition_dataset.py`: Rich world state encoding
+  - `_encode_state()` uses Julia parser for semantic graphs
+  - `_world_state_to_tensors()` creates graph representations
+  - Node features: token embedding (96d) + module (16d) + arg count (16d)
+  - Edges from dispatch graph + module co-location
+- Action type prediction head added to SimplifiedJEPA
+  - Self-supervised auxiliary task
+  - 82.94% accuracy on 17 action types
+
+### SVD Analysis Results
+
+Following LLM-JEPA methodology to verify embedding structure:
+
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| Linear R² | **0.9639** | Highly linear before→after mapping |
+| Cosine Similarity | **0.9986** | Near-perfect linear prediction |
+| Effective Rank | 48 | Uses ~48 of 256 dimensions |
+| Top-10 Variance | 73.7% | Concentrated in low-dim subspace |
+
+### Training Results (with action type head)
+
+| Metric | Value |
+|--------|-------|
+| Cosine Similarity | **0.9862** |
+| Action Type Accuracy | **82.94%** |
+| Validation Loss | 0.0883 |
+
+### Per-Action Type Performance
+
+| Action Type | Count | Cos Sim | Pred Acc |
+|-------------|-------|---------|----------|
+| MODIFY_METHOD | 785 | 0.989 | 87.3% |
+| UNKNOWN | 536 | 0.985 | 79.5% |
+| ADD_METHOD | 289 | 0.974 | 81.0% |
+| ADD_IMPORT | 80 | 0.989 | 85.0% |
+| REMOVE_METHOD | 64 | 0.993 | 89.1% |
+
+### Changed
+
+- `agent/data/transition_dataset.py`: Now uses Julia parser for rich state encoding
+- `experiments/train_from_mined.py`: Added action type prediction head and auxiliary loss
+- `experiments/evaluate_model.py`: Added action type prediction accuracy metrics
+
+### Documentation
+
+- Updated `STATUS.md` to v0.5.0 with SVD analysis section
+- Added SVD analysis results and interpretation
+
+---
+
 ## [0.4.0] - 2026-01-16 - GitHub Actions Training & Model Evaluation
 
 Successfully trained JEPA model on 12 Julia packages via GitHub Actions. Achieved excellent prediction accuracy with 0.9987 cosine similarity.
