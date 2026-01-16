@@ -28,6 +28,23 @@ from torch_geometric.data import Data, Batch
 
 logger = logging.getLogger(__name__)
 
+# Lazy import of Julia parser to avoid circular imports
+_julia_parser_module = None
+
+def _get_julia_parser():
+    """Lazily import the Julia parser module."""
+    global _julia_parser_module
+    if _julia_parser_module is None:
+        import sys
+        from pathlib import Path
+        # Add agent directory to path if needed
+        agent_dir = Path(__file__).parent.parent
+        if str(agent_dir) not in sys.path:
+            sys.path.insert(0, str(agent_dir.parent))
+        from agent import julia_parser as jp
+        _julia_parser_module = jp
+    return _julia_parser_module
+
 
 # ============================================================================
 # Vocabulary
@@ -303,32 +320,100 @@ class TransitionDataset(Dataset):
         """
         Encode file contents into a graph representation.
 
-        This is a simplified encoding - in production we'd use
-        the Julia bridge to get proper AST/semantic info.
+        Uses the Julia parser for rich world state extraction including:
+        - Module graph (import/export relationships)
+        - Method table (function signatures)
+        - Dispatch graph (call relationships)
         """
-        # Extract all functions and types from files
-        all_tokens = []
-        for content in files.values():
-            tokens = self._extract_definitions(content)
-            all_tokens.extend(tokens)
+        # Extract rich world state using the Julia parser
+        jp = _get_julia_parser()
+        world_state = jp.extract_world_state_from_files(files)
 
-        # Create nodes for each definition
-        num_nodes = min(len(all_tokens), self.max_nodes)
+        return self._world_state_to_tensors(world_state)
+
+    def _world_state_to_tensors(self, world_state) -> dict:
+        """
+        Convert a WorldState to tensors for the model.
+
+        Creates a graph where:
+        - Nodes are functions/methods
+        - Edges are call relationships (from dispatch graph)
+        - Node features encode function name + module + arg count
+        """
+        # Collect all method names and create node features
+        method_names = []
+        method_modules = []
+        method_arg_counts = []
+
+        for func_name, methods in world_state.methods.items():
+            for method in methods:
+                method_names.append(func_name)
+                method_modules.append(method.module_name)
+                method_arg_counts.append(len(method.signature.arg_types))
+
+        # Limit to max_nodes
+        num_nodes = min(len(method_names), self.max_nodes)
         if num_nodes == 0:
-            num_nodes = 1  # Ensure at least one node
-            all_tokens = ["<EMPTY>"]
+            num_nodes = 1
+            method_names = ["<EMPTY>"]
+            method_modules = ["Main"]
+            method_arg_counts = [0]
 
-        # Node features: one-hot of token ID
-        node_ids = [self.vocab.encode(t) for t in all_tokens[:num_nodes]]
+        # Create node features (128-dim)
+        # Features: [token_embedding (96), module_embedding (16), arg_count (16)]
         node_features = torch.zeros(num_nodes, 128)
-        for i, tok_id in enumerate(node_ids):
-            node_features[i, tok_id % 128] = 1.0  # Simple hash embedding
 
-        # Create edges (connect sequential definitions)
+        for i in range(num_nodes):
+            # Token embedding (first 96 dims)
+            tok_id = self.vocab.encode(method_names[i])
+            node_features[i, tok_id % 96] = 1.0
+
+            # Module embedding (next 16 dims)
+            module_id = hash(method_modules[i]) % 16
+            node_features[i, 96 + module_id] = 1.0
+
+            # Arg count features (last 16 dims)
+            arg_count = min(method_arg_counts[i], 15)
+            node_features[i, 112 + arg_count] = 1.0
+
+        # Create name to index mapping for edge creation
+        name_to_idx = {}
+        for i, name in enumerate(method_names[:num_nodes]):
+            if name not in name_to_idx:
+                name_to_idx[name] = i
+
+        # Create edges from dispatch graph (call relationships)
         edges = []
-        for i in range(num_nodes - 1):
-            edges.append([i, i + 1])
-            edges.append([i + 1, i])  # Bidirectional
+        for edge in world_state.dispatch_edges:
+            caller_idx = name_to_idx.get(edge.caller)
+            callee_idx = name_to_idx.get(edge.callee)
+            if caller_idx is not None and callee_idx is not None:
+                edges.append([caller_idx, callee_idx])
+                edges.append([callee_idx, caller_idx])  # Bidirectional
+
+        # If no call edges, add sequential edges as fallback
+        if not edges:
+            for i in range(num_nodes - 1):
+                edges.append([i, i + 1])
+                edges.append([i + 1, i])
+
+        # Add module-level edges (methods in same module are connected)
+        module_to_nodes: dict[str, list[int]] = {}
+        for i, mod in enumerate(method_modules[:num_nodes]):
+            if mod not in module_to_nodes:
+                module_to_nodes[mod] = []
+            module_to_nodes[mod].append(i)
+
+        for nodes in module_to_nodes.values():
+            if len(nodes) > 1:
+                # Connect all nodes in same module
+                for i in range(len(nodes) - 1):
+                    edges.append([nodes[i], nodes[i + 1]])
+                    edges.append([nodes[i + 1], nodes[i]])
+
+        # Deduplicate edges
+        edge_set = set((min(e[0], e[1]), max(e[0], e[1])) for e in edges)
+        edges = [[e[0], e[1]] for e in edge_set] + [[e[1], e[0]] for e in edge_set]
 
         if edges:
             edge_index = torch.tensor(edges, dtype=torch.long).t()
@@ -336,7 +421,7 @@ class TransitionDataset(Dataset):
             edge_index = torch.zeros(2, 0, dtype=torch.long)
 
         # Method IDs (padded)
-        method_ids = self.vocab.encode_sequence(all_tokens, self.max_methods)
+        method_ids = self.vocab.encode_sequence(method_names, self.max_methods)
 
         return {
             "node_features": node_features,

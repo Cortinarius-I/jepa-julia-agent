@@ -27,7 +27,8 @@ import time
 from pydantic import BaseModel
 
 from .test_generator import AdaptiveTestGenerator, TestSuite, test_suite_to_julia
-from .world_state import WorldStateSnapshot, ActionType
+from .world_state import WorldStateSnapshot
+from .planner import ActionType
 
 logger = logging.getLogger(__name__)
 

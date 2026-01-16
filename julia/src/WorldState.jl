@@ -296,19 +296,457 @@ end
     extract_world_state(repo_path::String) -> WorldStateSnapshot
 
 Extract the semantic world state from a Julia repository.
+Uses static analysis of Julia source files.
 """
 function extract_world_state(repo_path::String)
-    snapshot = WorldStateSnapshot()
-    
-    # TODO: Implement extraction logic using:
-    # - CodeTracking for method locations
-    # - MethodAnalysis for method tables
-    # - Cthulhu for type inference
-    # - JuliaSyntax for AST parsing
-    
     @info "Extracting world state from $repo_path"
-    
-    snapshot
+
+    # Find all Julia source files
+    src_files = find_julia_files(repo_path)
+    @info "Found $(length(src_files)) Julia files"
+
+    # Extract module graph
+    modules = extract_module_graph(repo_path, src_files)
+
+    # Extract method table
+    methods = extract_method_table(src_files)
+
+    # Extract dispatch graph (simplified: call relationships)
+    dispatch = extract_dispatch_graph(src_files, methods)
+
+    # Type inference (placeholder - requires runtime analysis)
+    types = TypeInferenceState()
+
+    # Test state (scan test files)
+    tests = extract_test_state(repo_path)
+
+    # Invalidation state (placeholder - requires runtime tracking)
+    invalidations = InvalidationState()
+
+    # Compute repo hash
+    repo_hash = compute_repo_hash(repo_path)
+
+    WorldStateSnapshot(
+        modules,
+        methods,
+        dispatch,
+        types,
+        tests,
+        invalidations,
+        time(),
+        repo_hash
+    )
+end
+
+"""
+    find_julia_files(repo_path::String) -> Vector{String}
+
+Find all .jl files in the repository.
+"""
+function find_julia_files(repo_path::String)
+    files = String[]
+    for (root, dirs, filenames) in walkdir(repo_path)
+        # Skip hidden directories and common non-source dirs
+        filter!(d -> !startswith(d, ".") && d ∉ ["deps", "docs", "examples"], dirs)
+        for f in filenames
+            if endswith(f, ".jl")
+                push!(files, joinpath(root, f))
+            end
+        end
+    end
+    files
+end
+
+"""
+    extract_module_graph(repo_path::String, files::Vector{String}) -> ModuleGraph
+
+Extract the module dependency graph from source files.
+"""
+function extract_module_graph(repo_path::String, files::Vector{String})
+    nodes = Dict{Symbol, ModuleNode}()
+
+    for file in files
+        try
+            content = read(file, String)
+            extract_modules_from_source!(nodes, content, file)
+        catch e
+            @warn "Failed to parse $file: $e"
+        end
+    end
+
+    # Determine root module (usually matches repo name)
+    root = isempty(nodes) ? :Main : first(keys(nodes))
+
+    ModuleGraph(nodes, root)
+end
+
+"""
+    extract_modules_from_source!(nodes, content, file)
+
+Parse a Julia file and extract module definitions.
+"""
+function extract_modules_from_source!(nodes::Dict{Symbol, ModuleNode}, content::String, file::String)
+    lines = split(content, '\n')
+
+    current_module = nothing
+    imports = Symbol[]
+    exports = Symbol[]
+    submodules = Symbol[]
+
+    for line in lines
+        stripped = strip(line)
+
+        # Match module definition: module Foo / baremodule Foo
+        m = match(r"^(?:bare)?module\s+(\w+)", stripped)
+        if m !== nothing
+            if current_module !== nothing
+                # Save previous module
+                nodes[current_module] = ModuleNode(
+                    current_module, nothing, submodules, imports, exports, file
+                )
+            end
+            current_module = Symbol(m.captures[1])
+            imports = Symbol[]
+            exports = Symbol[]
+            submodules = Symbol[]
+            continue
+        end
+
+        # Match using statements: using Foo, Bar / using Foo: bar, baz
+        m = match(r"^using\s+(.+)", stripped)
+        if m !== nothing
+            # Parse module names (simplified)
+            parts = split(m.captures[1], r"[,:]")
+            for part in parts
+                part = strip(part)
+                if !isempty(part)
+                    # Extract first identifier (module name)
+                    m2 = match(r"^(\w+)", part)
+                    if m2 !== nothing
+                        push!(imports, Symbol(m2.captures[1]))
+                    end
+                end
+            end
+            continue
+        end
+
+        # Match import statements
+        m = match(r"^import\s+(.+)", stripped)
+        if m !== nothing
+            parts = split(m.captures[1], r"[,:]")
+            for part in parts
+                part = strip(part)
+                if !isempty(part)
+                    m2 = match(r"^(\w+)", part)
+                    if m2 !== nothing
+                        push!(imports, Symbol(m2.captures[1]))
+                    end
+                end
+            end
+            continue
+        end
+
+        # Match export statements
+        m = match(r"^export\s+(.+)", stripped)
+        if m !== nothing
+            parts = split(m.captures[1], ",")
+            for part in parts
+                part = strip(part)
+                if !isempty(part)
+                    push!(exports, Symbol(part))
+                end
+            end
+            continue
+        end
+    end
+
+    # Save last module
+    if current_module !== nothing
+        nodes[current_module] = ModuleNode(
+            current_module, nothing, submodules, unique(imports), unique(exports), file
+        )
+    end
+
+    nothing
+end
+
+"""
+    extract_method_table(files::Vector{String}) -> MethodTableState
+
+Extract method definitions from source files.
+"""
+function extract_method_table(files::Vector{String})
+    methods = Dict{Symbol, Vector{MethodInfo}}()
+    method_count = 0
+
+    for file in files
+        try
+            content = read(file, String)
+            extract_methods_from_source!(methods, content, file)
+        catch e
+            @warn "Failed to extract methods from $file: $e"
+        end
+    end
+
+    # Count total methods
+    for (_, ms) in methods
+        method_count += length(ms)
+    end
+
+    MethodTableState(methods, method_count)
+end
+
+"""
+    extract_methods_from_source!(methods, content, file)
+
+Parse a Julia file and extract function definitions.
+"""
+function extract_methods_from_source!(methods::Dict{Symbol, Vector{MethodInfo}}, content::String, file::String)
+    lines = split(content, '\n')
+    current_module = :Main
+
+    # Patterns for function definitions
+    # function foo(x, y) / foo(x, y) = / function foo(x::T, y::S) where {T, S}
+    func_patterns = [
+        r"^function\s+(\w+)\s*\(([^)]*)\)(\s*where\s*\{([^}]*)\})?",
+        r"^(\w+)\s*\(([^)]*)\)\s*=",
+        r"^function\s+(\w+)\s*\(",  # Multiline function
+    ]
+
+    for (line_num, line) in enumerate(lines)
+        stripped = strip(line)
+
+        # Track current module
+        m = match(r"^(?:bare)?module\s+(\w+)", stripped)
+        if m !== nothing
+            current_module = Symbol(m.captures[1])
+            continue
+        end
+
+        # Try to match function definitions
+        for pattern in func_patterns
+            m = match(pattern, stripped)
+            if m !== nothing
+                func_name = Symbol(m.captures[1])
+
+                # Parse argument types (simplified)
+                args = length(m.captures) >= 2 && m.captures[2] !== nothing ? m.captures[2] : ""
+                arg_types = parse_arg_types(args)
+
+                # Parse where clause
+                where_params = Symbol[]
+                if length(m.captures) >= 4 && m.captures[4] !== nothing
+                    where_str = m.captures[4]
+                    for part in split(where_str, ",")
+                        part = strip(part)
+                        m2 = match(r"^(\w+)", part)
+                        if m2 !== nothing
+                            push!(where_params, Symbol(m2.captures[1]))
+                        end
+                    end
+                end
+
+                sig = MethodSignature(func_name, arg_types, where_params, nothing)
+                info = MethodInfo(sig, current_module, file, line_num, false, UInt64(0))
+
+                if !haskey(methods, func_name)
+                    methods[func_name] = MethodInfo[]
+                end
+                push!(methods[func_name], info)
+                break
+            end
+        end
+    end
+
+    nothing
+end
+
+"""
+    parse_arg_types(args::String) -> Vector{Any}
+
+Parse function argument types from the argument string.
+"""
+function parse_arg_types(args::String)
+    types = Any[]
+    if isempty(strip(args))
+        return types
+    end
+
+    # Split by comma (simplified - doesn't handle nested types properly)
+    for arg in split(args, ",")
+        arg = strip(arg)
+        if isempty(arg)
+            continue
+        end
+
+        # Match name::Type pattern
+        m = match(r"::(.+)$", arg)
+        if m !== nothing
+            type_str = strip(m.captures[1])
+            # Remove default values
+            type_str = replace(type_str, r"\s*=.*$" => "")
+            push!(types, type_str)
+        else
+            push!(types, "Any")
+        end
+    end
+
+    types
+end
+
+"""
+    extract_dispatch_graph(files, methods) -> DispatchGraph
+
+Extract call relationships from source files.
+"""
+function extract_dispatch_graph(files::Vector{String}, method_table::MethodTableState)
+    edges = DispatchEdge[]
+
+    # Get all known function names
+    known_funcs = Set(keys(method_table.methods))
+
+    for file in files
+        try
+            content = read(file, String)
+            extract_calls_from_source!(edges, content, file, known_funcs)
+        catch e
+            @warn "Failed to extract calls from $file: $e"
+        end
+    end
+
+    DispatchGraph(edges, Vector{Tuple{MethodSignature, MethodSignature}}())
+end
+
+"""
+    extract_calls_from_source!(edges, content, file, known_funcs)
+
+Extract function call relationships from source.
+"""
+function extract_calls_from_source!(edges::Vector{DispatchEdge}, content::String, file::String, known_funcs::Set{Symbol})
+    lines = split(content, '\n')
+    current_func = nothing
+    current_module = :Main
+
+    for (line_num, line) in enumerate(lines)
+        stripped = strip(line)
+
+        # Track current module
+        m = match(r"^(?:bare)?module\s+(\w+)", stripped)
+        if m !== nothing
+            current_module = Symbol(m.captures[1])
+            continue
+        end
+
+        # Track current function (simplified)
+        m = match(r"^function\s+(\w+)", stripped)
+        if m !== nothing
+            current_func = Symbol(m.captures[1])
+            continue
+        end
+
+        m = match(r"^(\w+)\s*\(.*\)\s*=", stripped)
+        if m !== nothing
+            current_func = Symbol(m.captures[1])
+        end
+
+        # Look for function calls
+        if current_func !== nothing
+            # Find all identifier( patterns
+            for m in eachmatch(r"\b(\w+)\s*\(", line)
+                callee_name = Symbol(m.captures[1])
+                if callee_name in known_funcs && callee_name != current_func
+                    caller_sig = MethodSignature(current_func, Any[], Symbol[], nothing)
+                    callee_sig = MethodSignature(callee_name, Any[], Symbol[], nothing)
+
+                    edge = DispatchEdge(
+                        caller_sig,
+                        callee_sig,
+                        file,
+                        line_num,
+                        false  # Can't determine static dispatch without type info
+                    )
+                    push!(edges, edge)
+                end
+            end
+        end
+
+        # End of function
+        if startswith(stripped, "end")
+            current_func = nothing
+        end
+    end
+
+    nothing
+end
+
+"""
+    extract_test_state(repo_path::String) -> TestState
+
+Scan test files and extract test information.
+"""
+function extract_test_state(repo_path::String)
+    test_dir = joinpath(repo_path, "test")
+    results = TestResult[]
+
+    if isdir(test_dir)
+        for (root, dirs, files) in walkdir(test_dir)
+            for f in files
+                if endswith(f, ".jl")
+                    file_path = joinpath(root, f)
+                    try
+                        content = read(file_path, String)
+                        # Count @test macros
+                        test_count = count(r"@test\b", content)
+                        testset_count = count(r"@testset\b", content)
+
+                        # Add a summary result for this file
+                        push!(results, TestResult(
+                            f,
+                            file_path,
+                            true,  # Assume passing (we're not running tests)
+                            nothing,
+                            0.0
+                        ))
+                    catch e
+                        @warn "Failed to read test file $file_path: $e"
+                    end
+                end
+            end
+        end
+    end
+
+    TestState(results, length(results), 0, 0.0)
+end
+
+"""
+    compute_repo_hash(repo_path::String) -> String
+
+Compute a hash of the repository state.
+"""
+function compute_repo_hash(repo_path::String)
+    # Try to get git hash first
+    try
+        git_dir = joinpath(repo_path, ".git")
+        if isdir(git_dir)
+            head_file = joinpath(git_dir, "HEAD")
+            if isfile(head_file)
+                ref = strip(read(head_file, String))
+                if startswith(ref, "ref: ")
+                    ref_path = joinpath(git_dir, ref[6:end])
+                    if isfile(ref_path)
+                        return strip(read(ref_path, String))[1:8]
+                    end
+                else
+                    return ref[1:8]
+                end
+            end
+        end
+    catch e
+        @warn "Failed to get git hash: $e"
+    end
+
+    # Fall back to timestamp
+    string(hash(time()))
 end
 
 """

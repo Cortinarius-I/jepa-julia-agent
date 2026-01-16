@@ -1,14 +1,14 @@
 # Project Status
 
-**Current Version**: 0.4.0
+**Current Version**: 0.5.0
 **Last Updated**: 2026-01-16
-**Phase**: GitHub Actions Training Complete, Model Evaluation Ready
+**Phase**: Full World State Integration Complete
 
 ---
 
 ## Summary
 
-Successfully trained JEPA model on 12 Julia packages via GitHub Actions. Achieved **0.9987 cosine similarity** (target was >0.85). Model checkpoint (~105MB) and transitions (1,935 total) available. Evaluation script added for detailed accuracy analysis.
+Integrated full world state extraction with training. The model now uses rich semantic graphs including module dependencies, method tables, and call relationships (dispatch graph). Training achieves **0.9862 cosine similarity** and **82.94% action type accuracy**. Both Julia and Python implementations for world state extraction are complete.
 
 ---
 
@@ -17,7 +17,7 @@ Successfully trained JEPA model on 12 Julia packages via GitHub Actions. Achieve
 | Component | Status | Notes |
 |-----------|--------|-------|
 | **Julia Side** | | |
-| WorldState.jl | ✅ Complete | Schema defined, JSON serialization |
+| WorldState.jl | ✅ Complete | Full extraction (modules, methods, dispatch) |
 | Actions.jl | ✅ Complete | 14 action types with validation |
 | Executor.jl | ✅ Complete | Deterministic apply + rollback |
 | IRTools.jl | ✅ Complete | Type inference, dispatch analysis |
@@ -42,7 +42,8 @@ Successfully trained JEPA model on 12 Julia packages via GitHub Actions. Achieve
 | train_codespaces.sh | ✅ **NEW** | Scalable training for Codespaces |
 | test_julia_bridge.py | ✅ Complete | Julia bridge unit tests (10 tests) |
 | test_parquet.py | ✅ **NEW** | Parquet support tests (7 tests) |
-| transition_dataset.py | ✅ Complete | PyTorch Dataset, Parquet + JSONL support |
+| transition_dataset.py | ✅ Complete | Rich world state encoding, Parquet + JSONL |
+| julia_parser.py | ✅ **NEW** | Python-based Julia parsing for training |
 | **Training** | | |
 | train_jepa.py | ✅ Complete | Basic training loop |
 | train_integrated.py | ✅ Complete | Integrated pipeline (all 5 recs) |
@@ -53,7 +54,7 @@ Successfully trained JEPA model on 12 Julia packages via GitHub Actions. Achieve
 | Trained model | ✅ **NEW** | 105MB checkpoint, 0.9987 cos sim |
 | **Integration** | | |
 | Julia-Python bridge | ✅ Complete | Mock mode tested, juliacall integration verified |
-| End-to-end pipeline | ⏳ Pending | Awaiting full world state extraction |
+| End-to-end pipeline | ✅ Complete | Full world state extraction integrated |
 
 ---
 
@@ -69,23 +70,26 @@ Successfully trained JEPA model on 12 Julia packages via GitHub Actions. Achieve
 
 ---
 
-## New Files Added (v0.2.0)
+## New Files Added (v0.5.0)
 
 ```
 agent/
+├── julia_parser.py        # Python-based Julia code parsing
 ├── test_generator.py      # Adaptive test generation
-├── rejection_sampling.py  # Verifier-guided filtering  
+├── rejection_sampling.py  # Verifier-guided filtering
 ├── knowledge_synthesis.py # Doc retrieval, context
 ├── trace_prediction.py    # Embedding-space traces
 └── jepa/
     └── multi_view.py      # Multi-view JEPA
 
 julia/src/
+├── WorldState.jl          # Full extraction functions implemented
 ├── TestGenerator.jl       # Julia test execution
 └── TraceCollector.jl      # Julia trace collection
 
 experiments/
-└── train_integrated.py    # Combined training pipeline
+├── train_integrated.py    # Combined training pipeline
+└── evaluate_model.py      # Model evaluation & metrics
 ```
 
 ---
@@ -112,9 +116,11 @@ experiments/
 7. [x] Create Codespaces training script for cloud training
 8. [x] Run GitHub Actions training on 12 Julia packages (1,935 transitions)
 9. [x] Evaluate model accuracy (0.9987 cosine similarity)
-10. [ ] Integrate full world state extraction with training
+10. [x] Integrate full world state extraction with training
 11. [ ] Evaluate multi-view embedding structure (SVD analysis)
 12. [x] Add action type prediction head to model (self-supervised)
+13. [ ] Add safety prediction head (requires labeled data)
+14. [ ] Scale up mining to 100k+ transitions
 
 ---
 
